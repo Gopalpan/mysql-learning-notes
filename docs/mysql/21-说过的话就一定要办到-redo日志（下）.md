@@ -10,15 +10,23 @@
     &emsp;&emsp;`log buffer`的大小是有限的（通过系统变量`innodb_log_buffer_size`指定），如果不停的往这个有限大小的`log buffer`里塞入日志，很快它就会被填满。设计`InnoDB`的大佬认为如果当前写入`log buffer`的`redo`日志量已经占满了`log buffer`总容量的大约一半左右，就需要把这些日志刷新到磁盘上。
     
 - 事务提交时
-    
+  
     &emsp;&emsp;我们前面说过之所以使用`redo`日志主要是因为它占用的空间少，还是顺序写，在事务提交时可以不把修改过的`Buffer Pool`页面刷新到磁盘，但是为了保证持久性，必须要把修改这些页面对应的`redo`日志刷新到磁盘。
 
+  ```
+  读者注:
+  对应上章我的疑问,就是说提交时是把其事务在log buffer对应的所有mtr日志刷到磁盘,但未提交的事务就继续留在log buffer咯?那buf_free这个变量该怎么维护.
+  这里应该是把整个log buffer都刷进磁盘去吧?因为我感觉反正log buffer刷盘也挺频繁的,下面还有说每秒就刷一次盘呢
+  ```
+  
 - 后台线程不停的刷刷刷
 
     &emsp;&emsp;后台有一个线程，大约每秒都会刷新一次`log buffer`中的`redo`日志到磁盘。
 
 - 正常关闭服务器时
+
 - 做所谓的`checkpoint`时（我们现在没介绍过`checkpoint`的概念，稍后会仔细介绍，稍安勿躁）    
+
 - 其他的一些情况...
 
 ### redo日志文件组
@@ -133,6 +141,15 @@
 
 ![][21-09]
 
+```
+读者注:
+根据buf_next_to_write这个变量,说明我们上面的猜想是错误的.并非每次刷盘都是将整个log buffer刷出.
+事务A提交时,应该是从左往右刷出,buf_next_to_write不断右移,直到该事务产生的所有mtr对应的日志组都被全部刷出.
+这期间也可能会刷出夹在事务A中间的其它事务的redo log.
+```
+
+
+
 &emsp;&emsp;我们前面说`lsn`是表示当前系统中写入的`redo`日志量，这包括了写到`log buffer`而没有刷新到磁盘的日志，相应的，设计`InnoDB`的大佬提出了一个表示刷新到磁盘中的`redo`日志量的全局变量，称之为`flushed_to_disk_lsn`。系统第一次启动时，该变量的值和初始的`lsn`值是相同的，都是`8704`。随着系统的运行，`redo`日志被不断写入`log buffer`，但是并不会立即刷新到磁盘，`lsn`的值就和`flushed_to_disk_lsn`的值拉开了差距。我们演示一下：
 
 - 系统第一次启动后，向`log buffer`中写入了`mtr_1`、`mtr_2`、`mtr_3`这三个`mtr`产生的`redo`日志，假设这三个`mtr`开始和结束时对应的lsn值分别是：
@@ -155,14 +172,33 @@
 小贴士：应用程序向磁盘写入文件时其实是先写到操作系统的缓冲区中去，如果某个写入操作要等到操作系统确认已经写到磁盘时才返回，那需要调用一下操作系统提供的fsync函数。其实只有当系统执行了fsync函数后，flushed_to_disk_lsn的值才会跟着增长，当仅仅把log buffer中的日志写入到操作系统缓冲区却没有显式的刷新到磁盘时，另外的一个称之为write_lsn的值跟着增长。不过为了大家理解上的方便，我们在讲述时把flushed_to_disk_lsn和write_lsn的概念混淆了起来。
 ```
 
+```
+读者注:
+由上面的小贴士可见,log buffer这个缓冲区是分配给MySQL的内存划出来的一块,而刷盘操作是先刷到操作系统内存,再刷到磁盘.
+此处我对log buffer内存和操作系统内存的简要理解是:MySQL内存当然也是从操作系统划出来专门给MySQL用的,如果MySQL服务关闭则内存会被收回,其中的数据也就没有了.而操作系统的内存则是操作系统关闭其中的数据才会消失.
+```
+
+
+
 ### lsn值和redo日志文件偏移量的对应关系
+
 &emsp;&emsp;因为`lsn`的值是代表系统写入的`redo`日志量的一个总和，一个`mtr`中产生多少日志，`lsn`的值就增加多少（当然有时候要加上`log block header`和`log block trailer`的大小），这样`mtr`产生的日志写到磁盘中时，很容易计算某一个`lsn`值在`redo`日志文件组中的偏移量，如图：
 
 ![][21-12]
 
 &emsp;&emsp;初始时的`LSN`值是`8704`，对应文件偏移量`2048`，之后每个`mtr`向磁盘中写入多少字节日志，`lsn`的值就增长多少。
 
+```
+读者注:
+这里的redo日志文件组就是上面讲的默认名为:ib_logfile0\ib_logfile1的文件.
+这个文件都是由log block顺序排列的,刷盘也是刷到这文件中顺序排列.
+所以说很容易计算某一个`lsn`值在`redo`日志文件组中的偏移量.
+```
+
+
+
 ### flush链表中的LSN
+
 &emsp;&emsp;我们知道一个`mtr`代表一次对底层页面的原子访问，在访问过程中可能会产生一组不可分割的`redo`日志，在`mtr`结束时，会把这一组`redo`日志写入到`log buffer`中。除此之外，在`mtr`结束时还有一件非常重要的事情要做，就是<span style="color:red">把在mtr执行过程中可能修改过的页面加入到Buffer Pool的flush链表</span>。为了防止大家早已忘记`flush链表`是什么，我们再看一下图：
 
 ![][21-13]
@@ -209,6 +245,19 @@
     &emsp;&emsp;`redo`日志可以被覆盖，意味着它对应的脏页被刷到了磁盘，只要我们计算出当前系统中被最早修改的脏页对应的`oldest_modification`值，那<span style="color:red">凡是在系统lsn值小于该节点的oldest_modification值时产生的redo日志都是可以被覆盖掉的</span>，我们就把该脏页的`oldest_modification`赋值给`checkpoint_lsn`。
 
     &emsp;&emsp;比方说当前系统中`页a`已经被刷新到磁盘，那么`flush链表`的尾节点就是`页c`，该节点就是当前系统中最早修改的脏页了，它的`oldest_modification`值为8916，我们就把8916赋值给`checkpoint_lsn`（也就是说在redo日志对应的lsn值小于8916时就可以被覆盖掉）。
+
+    ```
+    读者注:
+    这里感觉有点不对劲.
+    步骤一的合理性前提是:越早产生的redo日志所要修改的页就越早从flush链表刷出.
+    但buffer pool的脏页刷盘逻辑有一条是：从`LRU链表`的冷数据中刷新一部分页面到磁盘.
+    所以步骤一的合理性前提不成立,如果页c的修改频率是最低的,那有可能页c比页a更早刷出,如此一来身为当前系统最早修改的脏页页a的oldest_modification却小于已刷到磁盘的页c的oldest_modification值.
+    那么在redo日志文件组中的mtr2的redo日志在页a刷新到磁盘之前就不会被覆盖,而事实上有关页c的redo日志是应该可以被覆盖的.
+    
+    且对于mtr2是修改了页b与页c,那如果只有其中一个被刷到磁盘,那是否对只针对修改页c的mtr2 redo日志记录组中的一部分redo日志就可以被覆盖了呢?还是要等到mtr2修改的所有页面都已经刷盘了才能对mtr2 的redo日志进行覆盖呢?
+    ```
+
+    
 
 - 步骤二：将`checkpoint_lsn`和对应的`redo`日志文件组偏移量以及此次`checkpint`的编号写到日志文件的管理信息（就是`checkpoint1`或者`checkpoint2`）中。
 
@@ -267,6 +316,14 @@ Last checkpoint at  124052494
 
 &emsp;&emsp;当然，`redo`日志文件组的第一个文件的管理信息中有两个block都存储了`checkpoint_lsn`的信息，我们当然是要选取<span style="color:Red">最近发生的那次checkpoint的信息</span>。衡量`checkpoint`发生时间早晚的信息就是所谓的`checkpoint_no`，我们只要把`checkpoint1`和`checkpoint2`这两个block中的`checkpoint_no`值读出来比一下大小，哪个的`checkpoint_no`值更大，说明哪个block存储的就是最近的一次`checkpoint`信息。这样我们就能拿到最近发生的`checkpoint`对应的`checkpoint_lsn`值以及它在`redo`日志文件组中的偏移量`checkpoint_offset`。
 
+```
+读者注:
+看来对于我上面的疑问,MySQL本就允许这样的问题存在.
+即：对于`checkpoint_lsn`之后的`redo`日志，它们对应的脏页可能没被刷盘，也可能被刷盘了.
+```
+
+
+
 ### 确定恢复的终点
 &emsp;&emsp;`redo`日志恢复的起点确定了，那终点是哪个呢？这个还得从block的结构说起。我们说在写`redo`日志的时候都是顺序写的，写满了一个block之后会再往下一个block中写：
 
@@ -294,6 +351,15 @@ Last checkpoint at  124052494
     &emsp;&emsp;我们前面说过，`checkpoint_lsn`之前的`redo`日志对应的脏页确定都已经刷到磁盘了，但是`checkpoint_lsn`之后的`redo`日志我们不能确定是否已经刷到磁盘，主要是因为在最近做的一次`checkpoint`后，可能后台线程又不断的从`LRU链表`和`flush链表`中将一些脏页刷出`Buffer Pool`。这些在`checkpoint_lsn`之后的`redo`日志，如果它们对应的脏页在奔溃发生时已经刷新到磁盘，那在恢复时也就没有必要根据`redo`日志的内容修改该页面了。
     
     &emsp;&emsp;那在恢复时怎么知道某个`redo`日志对应的脏页是否在奔溃发生时已经刷新到磁盘了呢？这还得从页面的结构说起，我们前面说过每个页面都有一个称之为`File Header`的部分，在`File Header`里有一个称之为`FIL_PAGE_LSN`的属性，该属性记载了最近一次修改页面时对应的`lsn`值（其实就是页面控制块中的`newest_modification`值）。如果在做了某次`checkpoint`之后有脏页被刷新到磁盘中，那么该页对应的`FIL_PAGE_LSN`代表的`lsn`值肯定大于`checkpoint_lsn`的值，凡是符合这种情况的页面就不需要重复执行lsn值小于`FIL_PAGE_LSN`的redo日志了，所以更进一步提升了奔溃恢复的速度。
+    
+    ```
+    读者注:
+    感觉又不对了,这里作者说的情况跟我上面疑问的情况不一样.
+    按照我上面的疑问,'跳过已经刷新到磁盘的页面'这一步都会出现问题,逆推过来就是我的疑问应该是有解决方案或者说我理解有误.
+    那答案究竟是什么呢?
+    ```
+    
+    
 
 ## 遗漏的问题：LOG_BLOCK_HDR_NO是如何计算的
 &emsp;&emsp;我们前面说过，对于实际存储`redo`日志的普通的`log block`来说，在`log block header`处有一个称之为`LOG_BLOCK_HDR_NO`的属性（忘记了的话回头再看看），我们说这个属性代表一个唯一的标号。这个属性是初次使用该block时分配的，跟当时的系统`lsn`值有关。使用下面的公式计算该block的`LOG_BLOCK_HDR_NO`值：
@@ -308,29 +374,31 @@ Last checkpoint at  124052494
 
 &emsp;&emsp;另外，`LOG_BLOCK_HDR_NO`值的第一个比特位比较特殊，称之为`flush bit`，如果该值为1，代表着本block是在某次将`log buffer`中的block刷新到磁盘的操作中的第一个被刷入的block。
 
-  [21-01]: ../images/21-01.png
-  [21-02]: ../images/21-02.png
-  [21-03]: ../images/21-03.png
-  [21-04]: ../images/21-04.png
-  [21-05]: ../images/21-05.png
-  [21-06]: ../images/21-06.png
-  [21-07]: ../images/21-07.png
-  [21-08]: ../images/21-08.png
-  [21-09]: ../images/21-09.png
-  [21-10]: ../images/21-10.png
-  [21-11]: ../images/21-11.png
-  [21-12]: ../images/21-12.png
-  [21-13]: ../images/21-13.png
-  [21-14]: ../images/21-14.png
-  [21-15]: ../images/21-15.png
-  [21-16]: ../images/21-16.png
-  [21-17]: ../images/21-17.png
-  [21-18]: ../images/21-18.png
-  [21-19]: ../images/21-19.png
-  [21-20]: ../images/21-20.png
-  [21-21]: ../images/21-21.png
-  [21-22]: ../images/21-22.png
-  [21-23]: ../images/21-23.png
+[21-01]: ../images/21-01.png
+[21-02]: ../images/21-02.png
+[21-03]: ../images/21-03.png
+[21-04]: ../images/21-04.png
+[21-05]: ../images/21-05.png
+[21-06]: ../images/21-06.png
+[21-07]: ../images/21-07.png
+[21-08]: ../images/21-08.png
+[21-09]: ../images/21-09.png
+[21-10]: ../images/21-10.png
+[21-11]: ../images/21-11.png
+[21-12]: ../images/21-12.png
+[21-13]: ../images/21-13.png
+[21-14]: ../images/21-14.png
+[21-15]: ../images/21-15.png
+[21-16]: ../images/21-16.png
+[21-17]: ../images/21-17.png
+[21-18]: ../images/21-18.png
+[21-19]: ../images/21-19.png
+[21-20]: ../images/21-20.png
+[21-21]: ../images/21-21.png
+[21-22]: ../images/21-22.png
+[21-23]: ../images/21-23.png
+
+
 
 <div STYLE="page-break-after: always;"></div>
 

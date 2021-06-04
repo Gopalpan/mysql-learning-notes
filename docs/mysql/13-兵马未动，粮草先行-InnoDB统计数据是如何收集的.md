@@ -5,13 +5,14 @@
 &emsp;&emsp;`InnoDB`提供了两种存储统计数据的方式：
 
 - 永久性的统计数据
-    
+  
     &emsp;&emsp;这种统计数据存储在磁盘上，也就是服务器重启之后这些统计数据还在。
 
 - 非永久性的统计数据
 
     &emsp;&emsp;这种统计数据存储在内存中，当服务器关闭时这些这些统计数据就都被清除掉了，等到服务器重启之后，在某些适当的场景下才会重新收集这些统计数据。
     
+
 &emsp;&emsp;设计`MySQL`的大佬们给我们提供了系统变量`innodb_stats_persistent`来控制到底采用哪种方式去存储统计数据。在`MySQL 5.6.6`之前，`innodb_stats_persistent`的值默认是`OFF`，也就是说`InnoDB`的统计数据默认是存储到内存的，之后的版本中`innodb_stats_persistent`的值默认是`ON`，也就是统计数据默认被存储到磁盘中。
     
 &emsp;&emsp;不过`InnoDB`默认是<span style="color:red">以表为单位来收集和存储统计数据的</span>，也就是说我们可以把某些表的统计数据（以及该表的索引统计数据）存储在磁盘上，把另一些表的统计数据存储在内存中。怎么做到的呢？我们可以在创建和修改表的时候通过指定`STATS_PERSISTENT`属性来指明该表的统计数据存储方式：
@@ -114,7 +115,7 @@ mysql> SELECT * FROM mysql.innodb_table_stats;
     ![][13-01]
 
 - 从对应的`INODE Entry`结构中可以找到该段对应所有零散的页面地址以及`FREE`、`NOT_FULL`、`FULL`链表的基节点。
-    
+  
     这个是`INODE Entry`结构：
 
     ![][13-02]
@@ -192,7 +193,7 @@ mysql> SELECT * FROM mysql.innodb_index_stats WHERE table_name = 'single_table';
         ```
         小贴士：这里需要注意的是，对于普通的二级索引，并不能保证它的索引列值是唯一的，比如对于idx_key1来说，key1列就可能有很多值重复的记录。此时只有在索引列上加上主键值才可以区分两条索引列值都一样的二级索引记录。对于主键和唯一二级索引则没有这个问题，它们本身就可以保证索引列值的不重复，所以也不需要再统计一遍在索引列后加上主键值的不重复值有多少。比如上面的idx_key1有n_diff_pfx01、n_diff_pfx02两个统计项，而idx_key2却只有n_diff_pfx01一个统计项。
         ```
-        
+    
 - 在计算某些索引列中包含多少不重复值时，需要对一些叶子节点页面进行采样，`size`列就表明了采样的页面数量是多少。
 
     ```
@@ -233,7 +234,7 @@ mysql> SELECT * FROM mysql.innodb_index_stats WHERE table_name = 'single_table';
 &emsp;&emsp;其实`innodb_table_stats`和`innodb_index_stats`表就相当于一个普通的表一样，我们能对它们做增删改查操作。这也就意味着我们可以<span style="color:red">手动更新某个表或者索引的统计数据</span>。比如说我们想把`single_table`表关于行数的统计数据更改一下可以这么做：
 
 - 步骤一：更新`innodb_table_stats`表。
-    
+  
     ```
     UPDATE innodb_table_stats 
         SET n_rows = 1
@@ -274,6 +275,7 @@ mysql> SELECT * FROM mysql.innodb_index_stats WHERE table_name = 'single_table';
     ```
     &emsp;&emsp;在真正执行对`t2`表的查询前，`t1.comumn`的值是不确定的，所以我们也不能通过`index dive`的方式直接访问`B+`树索引去统计每个单点区间对应的记录的数量，所以也只能依赖统计数据中的平均一个值重复多少行来计算单点区间对应的记录数量。
         
+
 &emsp;&emsp;在统计索引列不重复的值的数量时，有一个比较烦的问题就是索引列中出现`NULL`值怎么办，比方说某个索引列的内容是这样：
 ```
 +------+

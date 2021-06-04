@@ -106,6 +106,7 @@ SELECT * FROM s1 INNER JOIN s2
     SELECT * FROM s1  UNION SELECT * FROM s2;
     ```
     
+
 &emsp;&emsp;查询语句中每出现一个`SELECT`关键字，设计`MySQL`的大佬就会为它分配一个唯一的`id`值。这个`id`值就是`EXPLAIN`语句的第一个列，比如下面这个查询中只有一个`SELECT`关键字，所以`EXPLAIN`的结果中也就只有一条`id`列为`1`的记录：
 ```
 mysql> EXPLAIN SELECT * FROM s1 WHERE key1 = 'a';
@@ -283,7 +284,7 @@ mysql> EXPLAIN SELECT * FROM s1  UNION ALL SELECT * FROM s2;
     &emsp;&emsp;需要大家注意的是，<span style="color:red">select_type为DEPENDENT SUBQUERY的查询可能会被执行多次</span>。
     
 - `DEPENDENT UNION`    
-    
+  
     &emsp;&emsp;在包含`UNION`或者`UNION ALL`的大查询中，如果各个小查询都依赖于外层查询的话，那除了最左边的那个小查询之外，其余的小查询的`select_type`的值就是`DEPENDENT UNION`。说的有些绕，比方说下面这个查询：
     
     ```
@@ -336,10 +337,10 @@ mysql> EXPLAIN SELECT * FROM s1  UNION ALL SELECT * FROM s2;
     &emsp;&emsp;执行计划的第三条记录的`id`值为`2`，说明该条记录对应的是一个单表查询，从它的`select_type`值为`MATERIALIZED`可以看出，查询优化器是要把子查询先转换成物化表。然后看执行计划的前两条记录的`id`值都为`1`，说明这两条记录对应的表进行连接查询，需要注意的是第二条记录的`table`列的值是`<subquery2>`，说明该表其实就是`id`为`2`对应的子查询执行之后产生的物化表，然后将`s1`和该物化表进行连接查询。
     
 - `UNCACHEABLE SUBQUERY`
-    
+  
     不常用，就不多介绍了。
 - `UNCACHEABLE UNION`
-    
+  
     不常用，就不多介绍了。
 
 ### partitions
@@ -385,7 +386,7 @@ mysql> EXPLAIN SELECT * FROM s1 WHERE key1 = 'a';
     ```
     
 - `const`
-    
+  
     &emsp;&emsp;这个我们前面介绍过，就是当我们根据主键或者唯一二级索引列与常数进行等值匹配时，对单表的访问方法就是`const`，比如：
     
     ```
@@ -436,7 +437,7 @@ mysql> EXPLAIN SELECT * FROM s1 WHERE key1 = 'a';
     ```
     
 - `index_merge`
-    
+  
     &emsp;&emsp;一般情况下对于某个表的查询只能使用到一个索引，但我们介绍单表访问方法时特意强调了在某些场景下可以使用`Intersection`、`Union`、`Sort-Union`这三种索引合并的方式来执行查询，忘掉的回去补一下，我们看一下执行计划中是怎么体现`MySQL`使用索引合并的方式来对某个表执行查询的：
 
     ```
@@ -449,7 +450,7 @@ mysql> EXPLAIN SELECT * FROM s1 WHERE key1 = 'a';
     1 row in set, 1 warning (0.01 sec)
     ```
     &emsp;&emsp;从执行计划的`type`列的值是`index_merge`就可以看出，`MySQL`打算使用索引合并的方式来执行对`s1`表的查询。
-        
+    
 - `unique_subquery`
 
     &emsp;&emsp;类似于两表连接中被驱动表的`eq_ref`访问方法，`unique_subquery`是针对在一些包含`IN`子查询的查询语句中，如果查询优化器决定将`IN`子查询转换为`EXISTS`子查询，而且子查询可以使用到主键进行等值匹配的话，那么该子查询执行计划的`type`列的值就是`unique_subquery`，比如下面的这个查询语句：
@@ -568,6 +569,24 @@ mysql> EXPLAIN SELECT key_part2 FROM s1 WHERE key_part3 = 'a';
 
 ### key_len
 &emsp;&emsp;`key_len`列表示当优化器决定使用某个索引执行查询时，该索引记录的最大长度，它是由这三个部分构成的：
+
+```
+注:我认为这应该是本次使用此索引中涉及到的索引叶子节点的最大使用长度.
+name varchar(8),
+cellphone char(11),
+default charset utf8;
+以复合索引idx_name_phone(name,cellphone)为例，此索引的叶子节点由【name,cellphone,primary key】组成,而我们有下列查询:
+		select 1 from xxx where name = 'aa';
+此时若使用索引idx_name_phone,则只使用了复合索引的name字段,此时计算此索引涉及到的叶子节点的最大使用长度为：
+		(8*3)+2+1 = 27.
+若查询语句为：select 1 from xxx where name = 'aa' and cellphone = 'bb'; 
+则此时涉及到的叶子节点的最大使用长度为：((8*3)+2+1) + ((11*3)+1)  = 61;
+所以key_len字段可以用来判断使用复合索引时是否有将复合索引完全使用,直观上数值越大使用的复合索引使用就越完全.
+当所用索引为单列索引时,key_len越小说明索引列长度越小,在进行索引内比较及IO的开销就越小则成本就越小,但这并不能作为评判此索引是执行sql的最优索引的充分条件或者必要条件,仅是一个参考值.
+```
+
+
+
 - 对于使用固定长度类型的索引列来说，它实际占用的存储空间的最大长度就是该固定值，对于指定字符集的变长类型的索引列来说，比如某个索引列的类型是`VARCHAR(100)`，使用的字符集是`utf8`，那么该列实际占用的最大存储空间就是`100 × 3 = 300`个字节。
 - 如果该索引列可以存储`NULL`值，则`key_len`比不可以存储`NULL`值时多1个字节。
 - 对于变长字段来说，都会有2个字节的空间来存储该变长列的实际长度。
@@ -678,6 +697,18 @@ mysql> EXPLAIN SELECT * FROM s1 WHERE key1 > 'z';
 1 row in set, 1 warning (0.00 sec)
 ```
 &emsp;&emsp;我们看到执行计划的`rows`列的值是`266`，这意味着查询优化器在经过分析使用`idx_key1`进行查询的成本之后，觉得满足`key1 > 'z'`这个条件的记录只有`266`条。
+
+![image-20210521214446305](mdimgs/image-20210521214446305.png)
+
+```
+对于表连接中的被驱动表,rows代表的是一次扫描所预计的行数.如上图:
+其它略| rows | filtered | Extra                 |
+驱动表| 346240 | 100.00 | Using where; Using index|
+被驱动表| 27 | 11.11 | Using where; Using index|
+被驱动表的rows为27,是指其扫描一次预计扫描的索引记录行数为27,而其作为被驱动表,将被扫描346240*100次
+```
+
+
 
 ### filtered
 &emsp;&emsp;之前在分析连接查询的成本时提出过一个`condition filtering`的概念，就是`MySQL`在计算驱动表扇出时采用的一个策略：

@@ -213,7 +213,7 @@
     &emsp;&emsp;需要注意的是，如果查询中需要使用`filesort`的方式进行排序的记录非常多，那么这个过程是很耗费性能的，我们最好想办法将使用`文件排序`的执行方式改为使用索引进行排序。
   
 - `Using temporary`
-    
+  
     &emsp;&emsp;在许多查询的执行过程中，`MySQL`可能会借助临时表来完成一些功能，比如去重、排序之类的，比如我们在执行许多包含`DISTINCT`、`GROUP BY`、`UNION`等子句的查询过程中，如果不能有效利用索引来完成查询，`MySQL`很有可能寻求通过建立内部的临时表来执行查询。如果查询中使用到了内部的临时表，在执行计划的`Extra`列将会显示`Using temporary`提示，比方说这样：
 
     ```
@@ -296,7 +296,7 @@
     ```
     
 - `FirstMatch(tbl_name)`
-    
+  
     &emsp;&emsp;在将`In`子查询转为`semi-join`时，如果采用的是`FirstMatch`执行策略，则在被驱动表执行计划的`Extra`列就是显示`FirstMatch(tbl_name)`提示，比如这样：
     ```
     mysql> EXPLAIN SELECT * FROM s1 WHERE common_field IN (SELECT key1 FROM s2 where s1.key3 = s2.key3);
@@ -414,7 +414,7 @@ EXPLAIN: {
 ```
 
 - `read_cost`是由下面这两部分组成的：
-    
+  
     - `IO`成本
     - 检测`rows × (1 - filter)`条记录的`CPU`成本
 
