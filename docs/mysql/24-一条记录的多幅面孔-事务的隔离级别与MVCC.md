@@ -42,7 +42,7 @@ mysql> SELECT * FROM hero;
     &emsp;&emsp;如上图，`Session A`和`Session B`各开启了一个事务，`Session B`中的事务先将`number`列为`1`的记录的`name`列更新为`'关羽'`，然后`Session A`中的事务接着又把这条`number`列为`1`的记录的`name`列更新为`张飞`。如果之后`Session B`中的事务进行了回滚，那么`Session A`中的更新也将不复存在，这种现象就称之为`脏写`。这时`Session A`中的事务就很懵逼，我明明把数据更新了，最后也提交事务了，怎么到最后说自己什么也没干呢？
     
 - 脏读（`Dirty Read`）
-    
+  
     &emsp;&emsp;如果<span style="color:red">一个事务读到了另一个未提交事务修改过的数据</span>，那就意味着发生了`脏读`，示意图如下：
 
     ![][24-02]
@@ -70,7 +70,7 @@ mysql> SELECT * FROM hero;
     ```
     小贴士：那对于先前已经读到的记录，之后又读取不到这种情况，算什么呢？其实这相当于对每一条记录都发生了不可重复读的现象。幻读只是重点强调了读取到了之前读取没有获取到的记录。
     ```
-        
+    
 ### SQL标准中的四种隔离级别
 &emsp;&emsp;我们上面介绍了几种并发事务执行过程中可能遇到的一些问题，这些问题也有轻重缓急之分，我们给这些问题按照严重性来排一下序：
 ```
@@ -142,7 +142,7 @@ level: {
     - 如果在事务之间执行，则对后续的事务有效。
     
 - 上述两个关键字都不用（只对执行语句后的下一个事务产生影响）：
-    
+  
     比方说这样：
     ```
     SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
@@ -152,6 +152,7 @@ level: {
     - 下一个事务执行完后，后续事务将恢复到之前的隔离级别。
     - 该语句不能在已经开启的事务中间执行，会报错的。
     
+
 &emsp;&emsp;如果我们在服务器启动时想改变事务的默认隔离级别，可以修改启动参数`transaction-isolation`的值，比方说我们在启动服务器时指定了`--transaction-isolation=SERIALIZABLE`，那么事务的默认隔离级别就从原来的`REPEATABLE READ`变成了`SERIALIZABLE`。
 
 &emsp;&emsp;想要查看当前会话默认的隔离级别可以通过查看系统变量`transaction_isolation`的值来确定：
@@ -240,6 +241,15 @@ mysql> SELECT * FROM hero;
 - 如果被访问版本的`trx_id`属性值在`ReadView`的`min_trx_id`和`max_trx_id`之间，那就需要判断一下`trx_id`属性值是不是在`m_ids`列表中，如果在，说明创建`ReadView`时生成该版本的事务还是活跃的，该版本不可以被访问；如果不在，说明创建`ReadView`时生成该版本的事务已经被提交，该版本可以被访问。
 
 &emsp;&emsp;如果某个版本的数据对当前事务不可见的话，那就顺着版本链找到下一个版本的数据，继续按照上面的步骤判断可见性，依此类推，直到版本链中的最后一个版本。如果最后一个版本也不可见的话，那么就意味着该条记录对该事务完全不可见，查询结果就不包含该记录。
+
+```
+读者注:
+可是像insert这一大类的undo日志在事务提交之后是可以被删除的,那版本链岂不是不完整.
+我先在事务A插入一条数据并提交,然后开启事务B更新这条数据,此时这条数据的版本链岂不是只有事务B更新的undo日志?
+而此时开启事务C查询事务B的数据,当事务B的版本不可以被事务C访问,且此时版本链中又只有一条更新数据,那岂不是事务C的查询结果就是不存在此记录?这样明显是不对的.
+```
+
+
 
 &emsp;&emsp;在`MySQL`中，`READ COMMITTED`和`REPEATABLE READ`隔离级别的的一个非常大的区别就是<span style="color:red">它们生成ReadView的时机不同</span>。我们还是以表`hero`为例来，假设现在表`hero`中只有一条由`事务id`为`80`的事务插入的一条记录：
 ```
@@ -439,17 +449,17 @@ SELECT * FROM hero WHERE number = 1; # 得到的列name的值仍为'刘备'
 
 &emsp;&emsp;随着系统的运行，在确定系统中包含最早产生的那个`ReadView`的事务不会再访问某些`update undo日志`以及被打了删除标记的记录后，有一个后台运行的`purge线程`会把它们真正的删除掉。关于更多的purge细节，我们将放到纸质书中进行详细介绍，不见不散～
 
-  [24-01]: ../images/24-01.png
-  [24-02]: ../images/24-02.png
-  [24-03]: ../images/24-03.png
-  [24-04]: ../images/24-04.png
-  [24-05]: ../images/24-05.png
-  [24-06]: ../images/24-06.png
-  [24-07]: ../images/24-07.png
-  [24-08]: ../images/24-08.png
-  [24-09]: ../images/24-09.png
-  [24-10]: ../images/24-10.png
-  [24-11]: ../images/24-11.png
-  
+[24-01]: ../images/24-01.png
+[24-02]: ../images/24-02.png
+[24-03]: ../images/24-03.png
+[24-04]: ../images/24-04.png
+[24-05]: ../images/24-05.png
+[24-06]: ../images/24-06.png
+[24-07]: ../images/24-07.png
+[24-08]: ../images/24-08.png
+[24-09]: ../images/24-09.png
+[24-10]: ../images/24-10.png
+[24-11]: ../images/24-11.png
+
 <div STYLE="page-break-after: always;"></div>
 
